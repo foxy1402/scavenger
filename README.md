@@ -6,11 +6,13 @@ entirely by environment variables, hunts the internet in the background:
 1. **Anonymous SOCKS5 / HTTP proxies** on cloud datacenter IPs (18 provider feeds,
    all regions) and on random residential IPv4 space.
 2. **Weakly configured LLM gateways** — anything serving `GET /v1/models` that
-   returns a model list is probed with a simple `hello` chat completion sent with no
-   real key (default `Bearer test`, configurable or off). Both `http://` and
-   `https://` are tried on every port, because self-hosted gateways are plain or TLS
-   depending on the deployer. A `429` on the chat call also counts as a catch — it
-   proves the gateway actually dispatched the request upstream.
+   returns a model list is probed with a simple `hello` chat completion. Two weak
+   auth flavors are sent: `Bearer <key>` (default key `test`, configurable) **and**
+   a bare `Bearer` with an empty token, to catch gateways that accept any random or
+   empty key. Both `http://` and `https://` are tried on every port, because
+   self-hosted gateways are plain or TLS depending on the deployer. A `429` on the
+   chat call also counts as a catch — it proves the gateway actually dispatched the
+   request upstream.
 
 Every catch is:
 
@@ -81,13 +83,14 @@ Per sampled `ip:port` (default 15 ports, including LLM-gateway ports **20128** a
   to `api.ipify.org` to capture the egress IP (shown in the alert).
 - **HTTP proxy** — absolute-form `GET http://api.ipify.org/` must return 200 with a
   plausible IP body.
-- **LLM** — `http://ip:port` and `https://ip:port` are probed in parallel; the
-  first hit wins and the winning scheme is stored with the catch. A hit is:
-  `GET /v1/models` returns a model list, pick the first model, then
-  `POST /v1/chat/completions` with
+- **LLM** — every combination of scheme (`http://ip:port`, `https://ip:port`) and
+  auth (`Bearer <LLM_TEST_API_KEY>`, default `test`, plus a bare `Bearer` with an
+  empty token) is probed in parallel; the first hit wins and the winning scheme is
+  stored with the catch. A hit is: `GET /v1/models` returns a model list, pick the
+  first model, then `POST /v1/chat/completions` with
   `{"messages":[{"role":"user","content":"hello"}]}`, `max_tokens=LLM_MAX_TOKENS`
   (default 256 — big enough that reasoning models don't burn the whole budget
-  thinking before answering) and the test key. Counted as a catch:
+  thinking before answering). Counted as a catch:
   - 200 with a non-empty reply (`status: ok`),
   - **429** — rate-limited, i.e. the gateway dispatched the request upstream
     (`status: 429`),
@@ -233,7 +236,7 @@ bot makes a slow, polite pass; raise the knobs for more coverage.
 | `SCAN_PORTS`           | 15 ports (see `.env.example`) | ports probed on every sampled IP, incl. LLM-gateway ports 20128/20130 |
 | `SAMPLE_PER_24`        | `2`                           | random IPs probed inside each /24                   |
 | `PROVIDERS`            | all 18 (see `.env.example`)   | cloud feeds to use                                  |
-| `LLM_TEST_API_KEY`     | `test`                        | sent as `Bearer <key>`; empty = no header           |
+| `LLM_TEST_API_KEY`     | `test`                        | sent as `Bearer <key>` in one probe variant; a bare `Bearer` (empty token) variant is always probed too |
 | `LLM_MAX_TOKENS`       | `256`                         | hello-completion budget; reasoning models may spend tokens before answering |
 | `CONNECT_TIMEOUT`      | `2.5`                         | seconds                                             |
 | `PROBE_TIMEOUT`        | `6`                           | seconds                                             |

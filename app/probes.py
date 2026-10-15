@@ -177,12 +177,21 @@ async def _llm_chat(session, base, model, headers, ssl_param, cfg):
     return None, r.status
 
 
-async def _llm_scheme(session, ip, port, scheme, cfg):
+def _llm_auth_variants(cfg):
+    """Two weak-auth flavors: the configured test key, plus a bare "Bearer"
+    with an empty token — some gateways accept any random or empty key."""
+    variants = []
+    if cfg.llm_test_api_key:
+        variants.append("Bearer " + cfg.llm_test_api_key)
+    if "Bearer" not in variants:
+        variants.append("Bearer")
+    return variants
+
+
+async def _llm_combo(session, ip, port, scheme, auth, cfg):
     base = f"{scheme}://{ip}:{port}"
     ssl_param = False if scheme == "https" else None
-    headers = {}
-    if cfg.llm_test_api_key:
-        headers["Authorization"] = "Bearer " + cfg.llm_test_api_key
+    headers = {"Authorization": auth}
     model = await _llm_first_model(session, base, headers, ssl_param, cfg)
     if not model:
         return None
@@ -193,15 +202,16 @@ async def _llm_scheme(session, ip, port, scheme, cfg):
 
 
 async def probe_llm(session, ip, port, cfg):
-    """OpenAI-compatible gateway: /v1/models, then a hello with no/weak key.
+    """OpenAI-compatible gateway: /v1/models, then a hello with a weak key.
 
     Self-hosted gateways are plain http or https depending on the deployer,
-    so both schemes are probed and the first hit wins.
+    and accept the test key or even a bare "Bearer" with an empty token,
+    so scheme x auth combinations are all probed and the first hit wins.
     """
-    results = await asyncio.gather(
-        _llm_scheme(session, ip, port, "http", cfg),
-        _llm_scheme(session, ip, port, "https", cfg),
-        return_exceptions=True)
+    tasks = [_llm_combo(session, ip, port, scheme, auth, cfg)
+             for scheme in ("http", "https")
+             for auth in _llm_auth_variants(cfg)]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
     for res in results:
         if isinstance(res, dict):
             return res

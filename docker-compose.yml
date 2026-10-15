@@ -17,7 +17,8 @@ services:
       SCAN_PORTS: ${SCAN_PORTS:-}
       SAMPLE_PER_24: ${SAMPLE_PER_24:-2}
       PROVIDERS: ${PROVIDERS:-}
-      # no `:-` here: an explicit empty LLM_TEST_API_KEY must mean "no header"
+      # no `:-` here: an explicit empty LLM_TEST_API_KEY must pass through
+      # (then only the bare "Bearer" probe variant is used)
       LLM_TEST_API_KEY: ${LLM_TEST_API_KEY-test}
       LLM_MAX_TOKENS: ${LLM_MAX_TOKENS:-256}
       CONNECT_TIMEOUT: ${CONNECT_TIMEOUT:-2.5}
