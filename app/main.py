@@ -38,6 +38,16 @@ async def _selftest_watchdog(stats, stop, timeout_s):
         await asyncio.sleep(0.2)
 
 
+def _watch(task):
+    """Log crashes loudly: an unattended container must not lose a scanner
+    or the bot silently while /healthz keeps answering 200."""
+    def _cb(t):
+        if not t.cancelled() and t.exception() is not None:
+            log.error("task %s crashed: %r", t.get_name(), t.exception())
+    task.add_done_callback(_cb)
+    return task
+
+
 async def amain():
     global _selftest_ok
     logging.basicConfig(level=logging.INFO,
@@ -48,6 +58,9 @@ async def amain():
     if store.items:
         log.info("loaded %d existing catches from %s", len(store.items), store.path)
     stats = Stats()
+    for item in store.items:
+        # seed so /status reports pre-existing catches after a restart
+        stats.record(item.get("type", "?"))
     log.info("scavenger starting | ports=%s providers=%s cloud_workers=%d "
              "res_workers=%d concurrency=%d data_dir=%s selftest=%s telegram=%s",
              ",".join(map(str, cfg.scan_ports)), ",".join(cfg.providers),
@@ -87,8 +100,8 @@ async def amain():
         group = ScannerGroup("selftest", cfg, selftest.MockPool(),
                              store, bot, stats, workers=1)
         bot.groups = [group]
-        tasks.append(asyncio.create_task(group.run(session, stop)))
-        tasks.append(asyncio.create_task(_selftest_watchdog(stats, stop, 90)))
+        tasks.append(_watch(asyncio.create_task(group.run(session, stop))))
+        tasks.append(_watch(asyncio.create_task(_selftest_watchdog(stats, stop, 90))))
     else:
         cloud_pool = CloudRangePool(cfg.providers)
         log.info("fetching cloud IP feeds…")
@@ -110,14 +123,20 @@ async def amain():
         ]
         bot.groups = groups
         for g in groups:
-            tasks.append(asyncio.create_task(g.run(session, stop)))
+            tasks.append(_watch(asyncio.create_task(g.run(session, stop))))
 
-    bot_task = asyncio.create_task(bot.start(stop))
+    bot_task = _watch(asyncio.create_task(bot.start(stop)))
 
     await stop.wait()
     log.info("shutting down…")
     bot_task.cancel()
-    await asyncio.gather(*tasks, bot_task, return_exceptions=True)
+    try:
+        # bounded so a stalled task can't eat the PaaS grace period and
+        # SIGKILL us before the Telegram backup below gets its window
+        await asyncio.wait_for(
+            asyncio.gather(*tasks, bot_task, return_exceptions=True), timeout=10)
+    except asyncio.TimeoutError:
+        log.warning("shutdown gather timed out; proceeding to backup")
     try:
         await bot.flush_pending()
         await bot.send_backup()

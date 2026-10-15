@@ -1,10 +1,10 @@
 """Known model IDs per provider — October 2026 snapshot.
 
-Data for the /llmtest Telegram command: given a caught gateway, test it
-against real model identifiers per provider (a weak gateway that answers
-"hello" will 404 on unknown models and 200/429 on ones it actually
-serves, which identifies both the model list it exposes and which
-provider it is mimicking).
+Reserved for the future /llmtest Telegram command: given a caught
+gateway, it would test the gateway against real model identifiers per
+provider (a weak gateway that answers "hello" will 404 on unknown
+models and 200/429 on ones it actually serves, which identifies both
+the model list it exposes and which provider it is mimicking).
 
 IDs are OpenAI-compatible ``model`` values unless noted. ``base_url`` is
 the provider's canonical OpenAI-compatible endpoint, for reference /
@@ -64,8 +64,9 @@ PROVIDERS = {
     },
     "anthropic": {
         # native Messages API — NOT a plain OpenAI-compatible endpoint;
-        # /llmtest should POST /v1/messages with the anthropic schema
-        # (x-api-key header, anthropic-version) rather than /chat/completions
+        # a future /llmtest should POST /v1/messages with the anthropic
+        # schema (x-api-key header, anthropic-version) rather than
+        # /chat/completions
         "base_url": "https://api.anthropic.com/v1",
         "api": "anthropic",
         "flagship": "claude-opus-5-5",
@@ -109,7 +110,8 @@ PROVIDERS = {
     },
     "glm": {
         # Zhipu. CN: https://open.bigmodel.cn/api/paas/v4
-        # IDs are lowercase (unlike most other providers)
+        # IDs are lowercase, like most providers (MiniMax's mixed case is
+        # the exception)
         "base_url": "https://api.z.ai/api/paas/v4",
         "api": "openai",
         "flagship": "glm-5.3",

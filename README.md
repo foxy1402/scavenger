@@ -111,7 +111,8 @@ Per sampled `ip:port` (default 15 ports, including LLM-gateway ports **20128** a
     spent the whole budget thinking (`status: length`).
 
 Catches are deduped by (type, ip, port, model), appended to the JSONL, logged, and
-sent to Telegram immediately (failed sends are buffered up to 100 and retried).
+sent to Telegram immediately (failed sends and documents are buffered up to
+100 entries and retried on the next poll).
 
 ## Deploy
 
@@ -168,7 +169,8 @@ docker compose logs -f
 The page: `http://localhost:8080/` · health: `http://localhost:8080/healthz`
 
 `docker-compose.yml` passes through every documented env var from `.env` (including
-timeouts and `PROVIDERS`); the `./data` volume persists the catch file on the host.
+timeouts and `PROVIDERS`) except `DATA_DIR`, which is fixed to the mounted `/data`;
+the `./data` volume persists the catch file on the host.
 
 ### 3. PaaS (Render / Railway / Fly / …)
 
@@ -280,7 +282,7 @@ Offline bot/command test (probes, store dedupe, `/export`, `/revalidate`):
 
 ```bash
 docker run --rm scavenger:latest python -m tests.test_commands
-# PASS ... (16 checks) RESULT: PASS
+# one PASS line per check, ending with RESULT: PASS
 ```
 
 ## Project layout

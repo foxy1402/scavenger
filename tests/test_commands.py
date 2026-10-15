@@ -4,6 +4,7 @@ Runs against the in-process mocks, no network or Telegram token needed.
 Run inside the image:  docker run --rm scavenger python -m tests.test_commands
 """
 import asyncio
+import json
 import os
 import sys
 import tempfile
@@ -23,9 +24,11 @@ class FakeTransport:
     def __init__(self):
         self.messages = []
         self.documents = []
+        self.updates = []
 
     async def get_updates(self, offset, timeout=50):
-        return {"result": []}
+        ups, self.updates = self.updates, []
+        return {"ok": True, "result": ups}
 
     async def send_message(self, chat_id, text):
         self.messages.append((chat_id, text))
@@ -93,12 +96,14 @@ async def run():
         root_runner = web.AppRunner(root_app)
         await root_runner.setup()
         await web.TCPSite(root_runner, "127.0.0.1", 11092).start()
-        r = await probe_llm(session, "127.0.0.1", 11092, cfg)
+        try:
+            r = await probe_llm(session, "127.0.0.1", 11092, cfg)
+        finally:
+            await root_runner.cleanup()
         check("probe_llm_root",
               r is not None and r.get("model") == "root-model"
               and r.get("api_base") == "http://127.0.0.1:11092",
               repr(r))
-        await root_runner.cleanup()
 
         # 2. probes against a closed port
         d = await probe_socks5(session, "127.0.0.1", 11089, cfg)
@@ -140,6 +145,8 @@ async def run():
 
         # 5. /revalidate drops the dead entry, keeps the live ones
         await bot.cmd_revalidate(42)
+        if bot._reval_task is not None:
+            await bot._reval_task  # revalidation runs as a background task
         remaining = await store.all_items()
         check("revalidate_kept", len(remaining) == 3, str(len(remaining)))
         check("revalidate_removed_dead",
@@ -165,6 +172,25 @@ async def run():
               len(llm_models.PROVIDERS) == 8 and ok_providers
               and llm_models.candidate_models("openai")[0] == "gpt-6-astra"
               and llm_models.candidate_models("nope") == [])
+
+        # 8. torn final JSONL line is repaired, not welded onto
+        torn_path = os.path.join(tmp, "torn.jsonl")
+        with open(torn_path, "w", encoding="utf-8") as f:
+            f.write(json.dumps(items[0]) + "\n")
+            f.write('{"type": "socks5"')  # torn by a crash mid-append
+        store3 = Store(torn_path)
+        check("store_torn_line_healed", len(store3.items) == 1,
+              str(len(store3.items)))
+        await store3.add(dict(items[1]))
+        store4 = Store(torn_path)
+        check("store_torn_reload", len(await store4.all_items()) == 2)
+
+        # 9. /start from a foreign chat must not hijack a bound bot
+        bot.transport.updates = [{"update_id": 5,
+                                  "message": {"chat": {"id": 999},
+                                              "text": "/start"}}]
+        await bot.poll_once()
+        check("start_guard", bot.chat_id == 42, repr(bot.chat_id))
     finally:
         await session.close()
         await cleanup()

@@ -60,7 +60,13 @@ class ScannerGroup:
 
     async def _worker(self, session, stop):
         while not stop.is_set():
-            provider, cidr24 = await self.pool.next_unit()
+            try:
+                provider, cidr24 = await self.pool.next_unit()
+            except Exception as e:
+                # a pool hiccup must not kill the worker silently
+                log.warning("%s pool error: %s", self.name, e)
+                await asyncio.sleep(1)
+                continue
             if cidr24 is None:
                 await asyncio.sleep(5)
                 continue
@@ -77,7 +83,10 @@ class ScannerGroup:
         net = ipaddress.ip_network(cidr24)
         count = net.num_addresses
         k = min(self.cfg.sample_per_24, count)
-        offsets = random.sample(range(count), k) if k < count else [0]
+        # k >= count means the block is fully covered: probe ALL of it
+        # (a /31 feed entry or SAMPLE_PER_24 >= 256 must not degrade to 1 IP)
+        offsets = (random.sample(range(count), k) if k < count
+                   else list(range(count)))
         tasks = []
         for off in offsets:
             ip = str(net.network_address + off)

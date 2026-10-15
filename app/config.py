@@ -1,4 +1,7 @@
+import logging
 import os
+
+log = logging.getLogger("scavenger.config")
 
 
 def _int(name, default):
@@ -6,6 +9,7 @@ def _int(name, default):
     try:
         return int(raw) if raw.strip() else default
     except ValueError:
+        log.warning("%s=%r is not an integer — using %s", name, raw, default)
         return default
 
 
@@ -14,6 +18,7 @@ def _float(name, default):
     try:
         return float(raw) if raw.strip() else default
     except ValueError:
+        log.warning("%s=%r is not a number — using %s", name, raw, default)
         return default
 
 
@@ -34,14 +39,19 @@ class Config:
 
     def __init__(self):
         self.port = _int("PORT", 8080)
+        if not 1 <= self.port <= 65535:
+            log.warning("PORT=%d out of range — using 8080", self.port)
+            self.port = 8080
         self.cloud_scanners = max(1, _int("CLOUD_SCANNERS", 1))
         self.residential_scanners = max(1, _int("RESIDENTIAL_SCANNERS", 1))
         self.check_concurrency = max(1, _int("CHECK_CONCURRENCY", 50))
         self.scan_ports = self._ports(os.environ.get("SCAN_PORTS", "") or self.DEFAULT_PORTS)
         self.sample_per_24 = max(1, _int("SAMPLE_PER_24", 2))
-        self.connect_timeout = _float("CONNECT_TIMEOUT", 2.5)
-        self.probe_timeout = _float("PROBE_TIMEOUT", 6.0)
-        self.chat_timeout = _float("CHAT_TIMEOUT", 30.0)
+        # floors: zero/negative timeouts would make every probe fail (or the
+        # feed refresher busy-loop) silently on an unattended deployment
+        self.connect_timeout = max(0.5, _float("CONNECT_TIMEOUT", 2.5))
+        self.probe_timeout = max(1.0, _float("PROBE_TIMEOUT", 6.0))
+        self.chat_timeout = max(1.0, _float("CHAT_TIMEOUT", 30.0))
         self.data_dir = os.environ.get("DATA_DIR", "") or "/data"
         self.telegram_token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
         self.telegram_chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
@@ -52,7 +62,7 @@ class Config:
         self.page_title = os.environ.get("PAGE_TITLE", "") or "Coming soon"
         self.page_content = (os.environ.get("PAGE_CONTENT", "")
                              or "This site is under construction and will be back shortly.")
-        self.feed_refresh_hours = _float("FEED_REFRESH_HOURS", 6.0)
+        self.feed_refresh_hours = max(0.1, _float("FEED_REFRESH_HOURS", 6.0))
         self.providers = [p.strip().lower() for p in
                           (os.environ.get("PROVIDERS", "") or self.DEFAULT_PROVIDERS).split(",")
                           if p.strip()]
@@ -71,4 +81,9 @@ class Config:
                 continue
             if 1 <= p <= 65535:
                 out.append(p)
-        return out or [80]
+        if not out:
+            if raw.strip():
+                log.warning("SCAN_PORTS=%r parsed to no valid ports — "
+                            "falling back to port 80", raw)
+            return [80]
+        return out

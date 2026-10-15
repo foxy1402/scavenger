@@ -111,7 +111,20 @@ class RealTransport:
                                     params={"offset": offset, "timeout": timeout,
                                             "allowed_updates": '["message"]'},
                                     timeout=aiohttp.ClientTimeout(total=timeout + 15)) as r:
-            return await r.json(content_type=None)
+            data = await r.json(content_type=None)
+        # an error body (401 bad token, 409 conflict, 429 flood) has no
+        # "result": treating it as "no updates" would hot-loop silently
+        if not isinstance(data, dict) or not data.get("ok"):
+            desc = data.get("description") if isinstance(data, dict) else data
+            retry_after = None
+            if isinstance(data, dict):
+                retry_after = (data.get("parameters") or {}).get("retry_after")
+            if retry_after:
+                log.warning("telegram getUpdates rate limited, sleeping %ss",
+                            retry_after)
+                await asyncio.sleep(min(float(retry_after), 60))
+            raise RuntimeError(f"telegram getUpdates: {desc}")
+        return data
 
     async def send_message(self, chat_id, text):
         for chunk in _chunk(text):
@@ -120,7 +133,7 @@ class RealTransport:
                                       "disable_web_page_preview": True})
 
     async def send_document(self, chat_id, data, filename):
-        form = aiohttp.MultipartFormData()
+        form = aiohttp.FormData()
         form.add_field("chat_id", str(chat_id))
         form.add_field("document", io.BytesIO(data), filename=filename)
         await self._post("sendDocument", form=form)
@@ -143,6 +156,7 @@ class TelegramBot:
                 log.warning("TELEGRAM_CHAT_ID is not an integer: %s", cfg.telegram_chat_id)
         self.pending = []
         self.revalidating = False
+        self._reval_task = None
         self.started_at = time.time()
 
     # ---- outbound -------------------------------------------------------
@@ -152,13 +166,21 @@ class TelegramBot:
                      "" if self.cfg.telegram_token else " off",
                      text.splitlines()[0] if text else "")
             return
+        chunks = _chunk(text)
+        sent = 0
         try:
-            await self.transport.send_message(chat_id, text)
+            for chunk in chunks:
+                await self.transport.send_message(chat_id, chunk)
+                sent += 1
         except Exception as e:
+            # buffer only the unsent tail so a partial multi-chunk send
+            # isn't duplicated on retry
             if len(self.pending) < 100:
-                self.pending.append((chat_id, text))
-                log.warning("telegram send failed, buffered (%d pending): %s",
-                            len(self.pending), e)
+                for chunk in chunks[sent:]:
+                    self.pending.append(("msg", chat_id, chunk))
+                log.warning("telegram send failed after %d/%d chunks, "
+                            "buffered (%d pending): %s",
+                            sent, len(chunks), len(self.pending), e)
             else:
                 log.warning("telegram buffer full, dropping message")
 
@@ -169,7 +191,12 @@ class TelegramBot:
         try:
             await self.transport.send_document(chat_id, data, filename)
         except Exception as e:
-            log.warning("telegram document send failed: %s", e)
+            if len(self.pending) < 100:
+                self.pending.append(("doc", chat_id, data, filename))
+                log.warning("telegram document send failed, buffered "
+                            "(%d pending): %s", len(self.pending), e)
+            else:
+                log.warning("telegram buffer full, dropping document")
 
     async def send_catch(self, item):
         text = format_catch(item)
@@ -178,11 +205,17 @@ class TelegramBot:
 
     async def flush_pending(self):
         while self.pending:
-            chat_id, text = self.pending[0]
+            entry = self.pending[0]
             try:
-                await self.transport.send_message(chat_id, text)
+                if entry[0] == "doc":
+                    await self.transport.send_document(entry[1], entry[2],
+                                                       entry[3])
+                else:
+                    await self.transport.send_message(entry[1], entry[2])
                 self.pending.pop(0)
-            except Exception:
+            except Exception as e:
+                log.warning("telegram flush failed (%d pending): %s",
+                            len(self.pending), e)
                 break
 
     async def send_backup(self):
@@ -247,9 +280,14 @@ class TelegramBot:
                 continue
             cmd = text.split()[0].lower().split("@")[0]  # /status@MyBot
             if cmd == "/start":
-                if chat_id != self.chat_id:
+                if self.chat_id is None:
+                    # bind only an unconfigured bot: with TELEGRAM_CHAT_ID set,
+                    # anyone who finds the bot must not steal the catch stream
                     self.chat_id = chat_id
                     log.info("telegram chat bound to %s", chat_id)
+                elif chat_id != self.chat_id:
+                    log.warning("ignored /start from unauthorized chat %s", chat_id)
+                    continue
                 await self.send(chat_id,
                                 "✅ scavenger bot online.\n"
                                 "commands: /status · /revalidate · /export")
@@ -303,6 +341,11 @@ class TelegramBot:
             return
         await self.send(chat_id, f"🔁 revalidating {len(items)} catch(es)…")
         self.revalidating = True
+        # run in the background: a large store would otherwise stall the
+        # polling loop (and pending flushes) for minutes
+        self._reval_task = asyncio.create_task(self._revalidate_run(items, chat_id))
+
+    async def _revalidate_run(self, items, chat_id):
         try:
             alive, dead = await self._revalidate_all(items)
             # remove the dead keys from the CURRENT list — catches recorded by
@@ -316,6 +359,9 @@ class TelegramBot:
                 if len(dead) > 30:
                     lines.append(f"…and {len(dead) - 30} more")
             await self.send(chat_id, "\n".join(lines))
+        except Exception as e:
+            log.warning("revalidation failed: %s", e)
+            await self.send(chat_id, f"revalidation failed: {e}")
         finally:
             self.revalidating = False
 

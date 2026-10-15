@@ -27,8 +27,21 @@ PAGE = """<!doctype html>
 """
 
 
+@web.middleware
+async def _disguise(request, handler):
+    """aiohttp stamps 'Server: Python/3.x aiohttp/3.x' on every response —
+    a free fingerprint on a page that's supposed to look like ordinary
+    shared hosting."""
+    try:
+        resp = await handler(request)
+    except web.HTTPException as e:
+        resp = e
+    resp.headers["Server"] = "nginx"
+    return resp
+
+
 def make_app(cfg):
-    app = web.Application()
+    app = web.Application(middlewares=[_disguise])
     page = PAGE.format(title=html.escape(cfg.page_title),
                        content=html.escape(cfg.page_content))
 

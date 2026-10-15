@@ -133,7 +133,13 @@ class CloudRangePool:
             if isinstance(res, Exception):
                 log.warning("feed %s failed: %s", p, res)
                 continue
-            new_lists[p] = cidrs_to_24s(res)
+            blocks = cidrs_to_24s(res)
+            if not blocks and self.lists.get(p):
+                # a 200 with an unusable body must not wipe a good list
+                log.warning("feed %s returned no CIDRs; keeping %d old blocks",
+                            p, len(self.lists[p]))
+                continue
+            new_lists[p] = blocks
             random.shuffle(new_lists[p])
             log.info("feed %s: %d /24 blocks", p, len(new_lists[p]))
         async with self.lock:

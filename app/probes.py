@@ -18,10 +18,19 @@ async def _read_exact(reader, n, timeout):
 
 
 async def _read_until_blank(reader, timeout):
-    """Read until the end of an HTTP header block; return the headers."""
+    """Read until the end of an HTTP header block; return the headers.
+
+    The total deadline bounds trickle servers that dribble bytes just
+    under the per-chunk timeout — per-chunk caps alone would let them
+    hold a worker for hours."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
     buf = b""
     while b"\r\n\r\n" not in buf and len(buf) < 16384:
-        chunk = await asyncio.wait_for(reader.read(4096), timeout)
+        left = deadline - loop.time()
+        if left <= 0:
+            break
+        chunk = await asyncio.wait_for(reader.read(4096), left)
         if not chunk:
             break
         buf += chunk
@@ -31,21 +40,36 @@ async def _read_until_blank(reader, timeout):
 
 
 async def _read_response(reader, timeout):
-    """Read a small HTTP response; return (head, body)."""
+    """Read a small HTTP response; return (head, body).
+
+    EOF must break the loop: a cleanly-FINing proxy makes read() return
+    b"" instantly forever, which would spin here with no timeout firing.
+    The total deadline covers trickle servers the same way."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
     buf = b""
-    try:
-        while b"\r\n\r\n" not in buf and len(buf) < 16384:
-            buf += await asyncio.wait_for(reader.read(4096), timeout)
-    except asyncio.TimeoutError:
-        pass
+    while b"\r\n\r\n" not in buf and len(buf) < 16384:
+        left = deadline - loop.time()
+        if left <= 0:
+            break
+        chunk = await asyncio.wait_for(reader.read(4096), left)
+        if not chunk:
+            break
+        buf += chunk
     if b"\r\n\r\n" not in buf:
         return buf, b""
     end = buf.index(b"\r\n\r\n") + 4
-    try:
-        while len(buf) <= end:
-            buf += await asyncio.wait_for(reader.read(4096), 1.0)
-    except asyncio.TimeoutError:
-        pass
+    while len(buf) <= end:
+        left = deadline - loop.time()
+        if left <= 0:
+            break
+        try:
+            chunk = await asyncio.wait_for(reader.read(4096), min(1.0, left))
+        except asyncio.TimeoutError:
+            break
+        if not chunk:
+            break
+        buf += chunk
     head, body = buf.split(b"\r\n\r\n", 1)
     return head, body
 
@@ -177,7 +201,8 @@ async def _llm_first_model(session, api, headers, ssl_param, cfg):
                                timeout=aiohttp.ClientTimeout(total=cfg.probe_timeout)) as r:
             if r.status != 200:
                 return None
-            data = await r.json(content_type=None)
+            raw = await r.content.read(262144)  # cap untrusted gateway bodies
+            data = json.loads(raw)
     except Exception:
         return None
     models = data.get("data") if isinstance(data, dict) else data
@@ -204,7 +229,7 @@ async def _llm_chat(session, api, model, headers, ssl_param, cfg):
                                 timeout=aiohttp.ClientTimeout(total=cfg.chat_timeout)) as r:
             if r.status not in (200, 429):
                 return None, r.status
-            raw = await r.text()
+            raw = (await r.content.read(262144)).decode("utf-8", "replace")
     except Exception:
         return None, None
     try:

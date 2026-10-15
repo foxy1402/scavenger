@@ -8,6 +8,7 @@ import asyncio
 import datetime
 import functools
 import ipaddress
+import logging
 import os
 import ssl
 import tempfile
@@ -15,6 +16,8 @@ import tempfile
 from aiohttp import web
 
 from app.probes import EGRESS_HOST
+
+log = logging.getLogger("scavenger.selftest")
 
 MOCK_EGRESS = "198.51.100.1"
 SOCKS5_PORT = 11080
@@ -112,7 +115,9 @@ async def _socks5_handler(reader, writer, tls=True):
         writer.write(_reply())
         await writer.drain()
     except Exception:
-        pass
+        # a mock fault must be visible: silent swallow makes a broken mock
+        # indistinguishable from a probe bug
+        log.exception("socks5 mock handler error")
     finally:
         try:
             writer.close()
@@ -131,7 +136,7 @@ async def _http_handler(reader, writer, tls=True):
         writer.write(_reply())
         await writer.drain()
     except Exception:
-        pass
+        log.exception("http mock handler error")
     finally:
         try:
             writer.close()
@@ -146,6 +151,10 @@ def make_llm_app():
         return web.json_response(_MODELS)
 
     async def chat(request):
+        # reject like a real gateway would: a probe bug that drops the auth
+        # header must fail the selftest, not pass against a lax mock
+        if not request.headers.get("Authorization", "").startswith("Bearer"):
+            return web.json_response({"error": "unauthorized"}, status=401)
         return web.json_response(_CHAT)
 
     app.router.add_get("/v1/models", models)
