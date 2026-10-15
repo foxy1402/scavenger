@@ -1,0 +1,31 @@
+services:
+  scavenger:
+    image: scavenger:latest
+    build: .
+    container_name: scavenger
+    restart: unless-stopped
+    ports:
+      - "${PORT:-8080}:${PORT:-8080}"
+    environment:
+      PORT: ${PORT:-8080}
+      DATA_DIR: /data
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+      CLOUD_SCANNERS: ${CLOUD_SCANNERS:-1}
+      RESIDENTIAL_SCANNERS: ${RESIDENTIAL_SCANNERS:-1}
+      CHECK_CONCURRENCY: ${CHECK_CONCURRENCY:-50}
+      SCAN_PORTS: ${SCAN_PORTS:-}
+      SAMPLE_PER_24: ${SAMPLE_PER_24:-2}
+      PROVIDERS: ${PROVIDERS:-}
+      # no `:-` here: an explicit empty LLM_TEST_API_KEY must mean "no header"
+      LLM_TEST_API_KEY: ${LLM_TEST_API_KEY-test}
+      LLM_MAX_TOKENS: ${LLM_MAX_TOKENS:-256}
+      CONNECT_TIMEOUT: ${CONNECT_TIMEOUT:-2.5}
+      PROBE_TIMEOUT: ${PROBE_TIMEOUT:-6}
+      CHAT_TIMEOUT: ${CHAT_TIMEOUT:-30}
+      FEED_REFRESH_HOURS: ${FEED_REFRESH_HOURS:-6}
+      SELFTEST: ${SELFTEST:-0}
+      PAGE_TITLE: ${PAGE_TITLE:-Coming soon}
+      PAGE_CONTENT: ${PAGE_CONTENT:-This site is under construction and will be back shortly.}
+    volumes:
+      - ./data:/data
