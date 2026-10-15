@@ -50,6 +50,7 @@ async def run():
     os.environ["DATA_DIR"] = tmp
     os.environ["TELEGRAM_BOT_TOKEN"] = "123:test"
     os.environ["TELEGRAM_CHAT_ID"] = "42"
+    os.environ["PROBE_TIMEOUT"] = "2"  # keep the negative TLS cases snappy
     cfg = Config()
     store = Store(os.path.join(tmp, "catches.jsonl"))
     stats = Stats()
@@ -58,12 +59,19 @@ async def run():
     session = aiohttp.ClientSession()
     bot.session = session
     cleanup = await selftest.start_mocks()
+    plain_cleanup = await selftest.start_plain_mocks()
     try:
-        # 1. probes against live mocks
+        # 1. probes against live mocks (CONNECT + TLS must succeed)
         s = await probe_socks5(session, "127.0.0.1", selftest.SOCKS5_PORT, cfg)
         check("probe_socks5", s is not None and s.get("egress") == selftest.MOCK_EGRESS, repr(s))
         h = await probe_http(session, "127.0.0.1", selftest.HTTP_PROXY_PORT, cfg)
         check("probe_http", h is not None and h.get("egress") == selftest.MOCK_EGRESS, repr(h))
+
+        # 1b. plain-HTTP-only proxies (no CONNECT tunnel / no TLS) are rejected
+        ps = await probe_socks5(session, "127.0.0.1", selftest.PLAIN_SOCKS5_PORT, cfg)
+        check("probe_socks5_plain_only_rejected", ps is None, repr(ps))
+        ph = await probe_http(session, "127.0.0.1", selftest.PLAIN_HTTP_PROXY_PORT, cfg)
+        check("probe_http_plain_only_rejected", ph is None, repr(ph))
         l = await probe_llm(session, "127.0.0.1", selftest.LLM_PORT, cfg)
         check("probe_llm",
               l is not None and l.get("model") == "mock-llm-1"
@@ -149,6 +157,7 @@ async def run():
     finally:
         await session.close()
         await cleanup()
+        await plain_cleanup()
 
     print("RESULT:", "PASS" if not _failures else f"FAIL {_failures}", flush=True)
     return 1 if _failures else 0

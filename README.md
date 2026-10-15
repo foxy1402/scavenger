@@ -4,7 +4,11 @@ A single Docker container that looks like a plain "coming soon" web page but, dr
 entirely by environment variables, hunts the internet in the background:
 
 1. **Anonymous SOCKS5 / HTTP proxies** on cloud datacenter IPs (18 provider feeds,
-   all regions) and on random residential IPv4 space.
+   all regions) and on random residential IPv4 space — every proxy catch is
+   **HTTPS-verified**: the probe opens a real `CONNECT` tunnel to port 443 and
+   completes a full TLS handshake through it, so a catch actually works for
+   modern TLS sites and apps. Plain-HTTP-only proxies (which can't carry
+   HTTPS) are not caught.
 2. **Weakly configured LLM gateways** — anything serving a `GET /models` endpoint
    (under the standard `/v1` prefix, or at the bare root in rare cases) that
    returns a model list is probed with a simple `hello` chat completion. Two weak
@@ -81,10 +85,14 @@ Per sampled `ip:port` (default 15 ports, including LLM-gateway ports **20128** a
 **20130**), three probes run in parallel under a shared per-group concurrency limit
 (`CHECK_CONCURRENCY`, default 50):
 
-- **SOCKS5** — version-5 greeting, must accept no-auth, then a real CONNECT through
-  to `api.ipify.org` to capture the egress IP (shown in the alert).
-- **HTTP proxy** — absolute-form `GET http://api.ipify.org/` must return 200 with a
-  plausible IP body.
+- **SOCKS5** — version-5 greeting, must accept no-auth, then a real CONNECT
+  through to `api.ipify.org:443`, a TLS handshake inside the tunnel, and a
+  `GET /` over TLS to capture the egress IP (shown in the alert). A catch is a
+  proxy proven to carry HTTPS.
+- **HTTP proxy** — `CONNECT api.ipify.org:443` must return 200, then a TLS
+  handshake and a `GET /` through the tunnel must return 200 with a real IP
+  body. Proxies that only do plain absolute-form GETs (no `CONNECT`) are
+  skipped — they can't be used for HTTPS sites/apps.
 - **LLM** — every combination of scheme (`http://ip:port`, `https://ip:port`),
   auth (`Bearer <LLM_TEST_API_KEY>`, default `test`, plus a bare `Bearer` with an
   empty token), and API base (`{base}/v1` — the normal layout, and the bare

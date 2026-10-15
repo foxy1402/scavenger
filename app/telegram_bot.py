@@ -19,13 +19,13 @@ def format_catch(item):
     stamp = item.get("captured_at", "")
     t = item.get("type", "")
     if t == "socks5":
-        lines = ["🔓 CATCH — SOCKS5 PROXY",
+        lines = ["🔓 CATCH — SOCKS5 PROXY (https-verified)",
                  f"addr     {item.get('ip')}:{item.get('port')}",
                  f"egress   {item.get('egress') or '?'}",
                  f"where    {where}",
                  f"captured {stamp}"]
     elif t == "http_proxy":
-        lines = ["🔓 CATCH — HTTP PROXY",
+        lines = ["🔓 CATCH — HTTP PROXY (https-verified)",
                  f"addr     {item.get('ip')}:{item.get('port')}",
                  f"egress   {item.get('egress') or '?'}",
                  f"where    {where}",
@@ -62,7 +62,8 @@ def format_export(items):
             else:
                 scheme = "socks5" if key == "socks5" else "http"
                 parts.append(f"{scheme}://{i.get('ip')}:{i.get('port')}"
-                             f"  egress={i.get('egress') or '?'}  ({where})  {stamp}")
+                             f"  egress={i.get('egress') or '?'} (https)"
+                             f"  ({where})  {stamp}")
         parts.append("")
     return "\n".join(parts).strip()
 

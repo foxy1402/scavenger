@@ -1,9 +1,12 @@
 import asyncio
+import ipaddress
 import json
+import ssl
 
 import aiohttp
 
 EGRESS_HOST = "api.ipify.org"
+EGRESS_PORT = 443  # every proxy catch must be able to carry HTTPS
 
 
 async def _tcp_connect(ip, port, timeout):
@@ -14,21 +17,78 @@ async def _read_exact(reader, n, timeout):
     return await asyncio.wait_for(reader.readexactly(n), timeout)
 
 
+async def _read_until_blank(reader, timeout):
+    """Read until the end of an HTTP header block; return the headers."""
+    buf = b""
+    while b"\r\n\r\n" not in buf and len(buf) < 16384:
+        chunk = await asyncio.wait_for(reader.read(4096), timeout)
+        if not chunk:
+            break
+        buf += chunk
+    if b"\r\n\r\n" in buf:
+        return buf.split(b"\r\n\r\n", 1)[0]
+    return buf
+
+
+async def _read_response(reader, timeout):
+    """Read a small HTTP response; return (head, body)."""
+    buf = b""
+    try:
+        while b"\r\n\r\n" not in buf and len(buf) < 16384:
+            buf += await asyncio.wait_for(reader.read(4096), timeout)
+    except asyncio.TimeoutError:
+        pass
+    if b"\r\n\r\n" not in buf:
+        return buf, b""
+    end = buf.index(b"\r\n\r\n") + 4
+    try:
+        while len(buf) <= end:
+            buf += await asyncio.wait_for(reader.read(4096), 1.0)
+    except asyncio.TimeoutError:
+        pass
+    head, body = buf.split(b"\r\n\r\n", 1)
+    return head, body
+
+
+def _tls_context():
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    return ctx
+
+
+async def _upgrade_tls(reader, writer, timeout):
+    """Upgrade an established proxy tunnel to TLS (cert-agnostic)."""
+    await writer.start_tls(_tls_context(), server_hostname=EGRESS_HOST,
+                           ssl_handshake_timeout=timeout)
+
+
+def _is_ip(value):
+    try:
+        ipaddress.ip_address(value)
+    except ValueError:
+        return False
+    return True
+
+
 async def probe_socks5(session, ip, port, cfg):
-    """Anonymous SOCKS5: version greeting, then CONNECT through to an egress host."""
+    """Anonymous SOCKS5: no-auth greeting, then CONNECT to the egress host over
+    a real TLS handshake — the catch must actually be able to carry HTTPS."""
     try:
         reader, writer = await _tcp_connect(ip, port, cfg.connect_timeout)
     except (OSError, asyncio.TimeoutError):
         return None
+    egress = ""
     try:
         writer.write(b"\x05\x01\x00")  # SOCKS5, 1 method, no-auth
         await writer.drain()
         greeting = await _read_exact(reader, 2, cfg.connect_timeout)
         if greeting[0] != 5 or greeting[1] != 0:
             return None
-        # CONNECT to egress host over domain form
+        # CONNECT to the egress host (domain form), then tunnel TLS through it
         host = EGRESS_HOST.encode()
-        req = b"\x05\x01\x00\x03" + bytes([len(host)]) + host + (80).to_bytes(2, "big")
+        req = (b"\x05\x01\x00\x03" + bytes([len(host)]) + host
+               + (EGRESS_PORT).to_bytes(2, "big"))
         writer.write(req)
         await writer.drain()
         head = await _read_exact(reader, 4, cfg.connect_timeout)
@@ -44,55 +104,69 @@ async def probe_socks5(session, ip, port, cfg):
             await _read_exact(reader, 18, cfg.connect_timeout)
         else:
             return None
-        egress = ""
-        try:
-            writer.write(b"GET / HTTP/1.1\r\nHost: " + EGRESS_HOST.encode()
-                         + b"\r\nConnection: close\r\n\r\n")
-            await writer.drain()
-            data = await asyncio.wait_for(reader.read(4096), cfg.probe_timeout)
-            _, _, body = data.partition(b"\r\n\r\n")
-            egress = body.decode("utf-8", "replace").strip()
-        except (OSError, asyncio.TimeoutError):
-            pass
-        if not egress or len(egress) > 45:
-            egress = ""
-        return {"egress": egress}
-    except (OSError, asyncio.TimeoutError, asyncio.IncompleteReadError):
+        await _upgrade_tls(reader, writer, cfg.probe_timeout)
+        writer.write(b"GET / HTTP/1.1\r\nHost: " + EGRESS_HOST.encode()
+                     + b"\r\nConnection: close\r\n\r\n")
+        await writer.drain()
+        _resp_head, body = await _read_response(reader, cfg.probe_timeout)
+        egress = body.decode("utf-8", "replace").strip()
+    except (OSError, asyncio.TimeoutError, asyncio.IncompleteReadError,
+            ssl.SSLError, ConnectionError, RuntimeError):
         return None
     finally:
+        # wait_closed can stall after a failed TLS upgrade (the peer never
+        # speaks TLS, so the close never completes) — cap it so a dead
+        # endpoint can't hold a worker
         try:
             writer.close()
-            await writer.wait_closed()
+            await asyncio.wait_for(writer.wait_closed(), 2.0)
         except Exception:
             pass
+    if not _is_ip(egress):
+        return None
+    return {"egress": egress}
 
 
 async def probe_http(session, ip, port, cfg):
-    """Anonymous HTTP proxy: absolute-form GET to an egress host."""
+    """Anonymous HTTP proxy: CONNECT to the egress host, TLS handshake, then a
+    GET through the tunnel — plain-GET-only proxies can't carry HTTPS (what
+    modern sites and apps need), so they don't count."""
     try:
         reader, writer = await _tcp_connect(ip, port, cfg.connect_timeout)
     except (OSError, asyncio.TimeoutError):
         return None
+    egress = ""
     try:
-        req = (b"GET http://" + EGRESS_HOST.encode() + b"/ HTTP/1.1\r\nHost: "
-               + EGRESS_HOST.encode() + b"\r\nConnection: close\r\n\r\n")
-        writer.write(req)
+        hostport = (EGRESS_HOST + ":" + str(EGRESS_PORT)).encode()
+        writer.write(b"CONNECT " + hostport + b" HTTP/1.1\r\nHost: " + hostport
+                     + b"\r\n\r\n")
         await writer.drain()
-        data = await asyncio.wait_for(reader.read(4096), cfg.probe_timeout)
-    except (OSError, asyncio.TimeoutError):
+        head = await _read_until_blank(reader, cfg.probe_timeout)
+        parts = head.split(b" ", 2)
+        if len(parts) < 2 or parts[1] != b"200":
+            return None
+        await _upgrade_tls(reader, writer, cfg.probe_timeout)
+        writer.write(b"GET / HTTP/1.1\r\nHost: " + EGRESS_HOST.encode()
+                     + b"\r\nConnection: close\r\n\r\n")
+        await writer.drain()
+        resp_head, body = await _read_response(reader, cfg.probe_timeout)
+        status = resp_head.split(b" ", 2)
+        if len(status) < 2 or status[1] != b"200":
+            return None
+        egress = body.decode("utf-8", "replace").strip()
+    except (OSError, asyncio.TimeoutError, ssl.SSLError, ConnectionError,
+            RuntimeError):
         return None
     finally:
+        # wait_closed can stall after a failed TLS upgrade (the peer never
+        # speaks TLS, so the close never completes) — cap it so a dead
+        # endpoint can't hold a worker
         try:
             writer.close()
-            await writer.wait_closed()
+            await asyncio.wait_for(writer.wait_closed(), 2.0)
         except Exception:
             pass
-    head, _, body = data.partition(b"\r\n\r\n")
-    parts = head.split(b" ", 2)
-    if len(parts) < 2 or parts[1] != b"200":
-        return None
-    egress = body.decode("utf-8", "replace").strip()
-    if not egress or len(egress) > 45:
+    if not _is_ip(egress):
         return None
     return {"egress": egress}
 
