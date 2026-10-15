@@ -5,14 +5,16 @@ entirely by environment variables, hunts the internet in the background:
 
 1. **Anonymous SOCKS5 / HTTP proxies** on cloud datacenter IPs (18 provider feeds,
    all regions) and on random residential IPv4 space.
-2. **Weakly configured LLM gateways** — anything serving `GET /v1/models` that
+2. **Weakly configured LLM gateways** — anything serving a `GET /models` endpoint
+   (under the standard `/v1` prefix, or at the bare root in rare cases) that
    returns a model list is probed with a simple `hello` chat completion. Two weak
    auth flavors are sent: `Bearer <key>` (default key `test`, configurable) **and**
    a bare `Bearer` with an empty token, to catch gateways that accept any random or
    empty key. Both `http://` and `https://` are tried on every port, because
    self-hosted gateways are plain or TLS depending on the deployer. A `429` on the
    chat call also counts as a catch — it proves the gateway actually dispatched the
-   request upstream.
+   request upstream. The catch message shows the **working** API base
+   (e.g. `https://ip:port/v1`) so you can point a client at it directly.
 
 Every catch is:
 
@@ -83,11 +85,14 @@ Per sampled `ip:port` (default 15 ports, including LLM-gateway ports **20128** a
   to `api.ipify.org` to capture the egress IP (shown in the alert).
 - **HTTP proxy** — absolute-form `GET http://api.ipify.org/` must return 200 with a
   plausible IP body.
-- **LLM** — every combination of scheme (`http://ip:port`, `https://ip:port`) and
+- **LLM** — every combination of scheme (`http://ip:port`, `https://ip:port`),
   auth (`Bearer <LLM_TEST_API_KEY>`, default `test`, plus a bare `Bearer` with an
-  empty token) is probed in parallel; the first hit wins and the winning scheme is
-  stored with the catch. A hit is: `GET /v1/models` returns a model list, pick the
-  first model, then `POST /v1/chat/completions` with
+  empty token), and API base (`{base}/v1` — the normal layout, and the bare
+  `{base}` root — the rare no-`/v1` gateways) is probed in parallel; the first hit
+  wins and the winning scheme + working base (`api_base`) are stored with the
+  catch. A hit is: `GET {base}/v1/models` (or `{base}/models`) returns a model
+  list, pick the first model, then `POST …/v1/chat/completions` (or
+  `…/chat/completions`) with
   `{"messages":[{"role":"user","content":"hello"}]}`, `max_tokens=LLM_MAX_TOKENS`
   (default 256 — big enough that reasoning models don't burn the whole budget
   thinking before answering). Counted as a catch:
@@ -210,15 +215,19 @@ Example catch message:
 
 ```
 🤖 CATCH — LLM GATEWAY
-addr     https://54.172.31.9:8000
+addr     https://54.172.31.9:8000/v1
 model    gpt-4o-mini
 reply    Hello! How can I help you today?
 where    cloud/aws
 captured 2026-10-14T12:00:00Z
 ```
 
-429 / reasoning-budget catches carry an extra `status` line (`429` / `length`) and
-the same marker in exports.
+`addr` is the working API base the probe found — almost always `…:port/v1`, but a
+bare `…:port` when the gateway serves its endpoints at the root. Exports use the
+same base, so you can copy-paste it as the `base_url` of any OpenAI-compatible
+client. 429 / reasoning-budget catches carry an extra `status` line (`429` /
+`length`) and the same marker in exports. Proxy catches stay plain `ip:port` (their
+usable form is `socks5://ip:port` / `http://ip:port`, as shown in exports).
 
 ## Environment variables
 

@@ -32,8 +32,9 @@ def format_catch(item):
                  f"captured {stamp}"]
     else:
         scheme = item.get("scheme", "http")
+        addr = item.get("api_base") or f"{scheme}://{item.get('ip')}:{item.get('port')}"
         lines = ["🤖 CATCH — LLM GATEWAY",
-                 f"addr     {scheme}://{item.get('ip')}:{item.get('port')}",
+                 f"addr     {addr}",
                  f"model    {item.get('model', '?')}",
                  f"reply    {item.get('reply', '')[:150]}"]
         if item.get("status") and item["status"] != "ok":
@@ -55,8 +56,9 @@ def format_export(items):
             stamp = i.get("captured_at", "")
             if key == "llm":
                 status = f"  [{i['status']}]" if i.get("status") and i["status"] != "ok" else ""
-                parts.append(f"{i.get('scheme', 'http')}://{i.get('ip')}:{i.get('port')}"
-                             f"  model={i.get('model', '?')}{status}  ({where})  {stamp}")
+                addr = (i.get("api_base")
+                        or f"{i.get('scheme', 'http')}://{i.get('ip')}:{i.get('port')}")
+                parts.append(f"{addr}  model={i.get('model', '?')}{status}  ({where})  {stamp}")
             else:
                 scheme = "socks5" if key == "socks5" else "http"
                 parts.append(f"{scheme}://{i.get('ip')}:{i.get('port')}"

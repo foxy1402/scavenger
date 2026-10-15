@@ -9,6 +9,7 @@ import sys
 import tempfile
 
 import aiohttp
+from aiohttp import web
 
 from app import selftest
 from app.config import Config
@@ -64,7 +65,32 @@ async def run():
         h = await probe_http(session, "127.0.0.1", selftest.HTTP_PROXY_PORT, cfg)
         check("probe_http", h is not None and h.get("egress") == selftest.MOCK_EGRESS, repr(h))
         l = await probe_llm(session, "127.0.0.1", selftest.LLM_PORT, cfg)
-        check("probe_llm", l is not None and l.get("model") == "mock-llm-1", repr(l))
+        check("probe_llm",
+              l is not None and l.get("model") == "mock-llm-1"
+              and l.get("api_base") == f"http://127.0.0.1:{selftest.LLM_PORT}/v1",
+              repr(l))
+
+        # root-path gateway (no /v1 prefix): caught via the bare-base fallback
+        root_app = web.Application()
+
+        async def _root_models(request):
+            return web.json_response({"data": [{"id": "root-model"}]})
+
+        async def _root_chat(request):
+            return web.json_response({"choices": [{"message": {"role": "assistant",
+                                                               "content": "root reply"}}]})
+
+        root_app.router.add_get("/models", _root_models)
+        root_app.router.add_post("/chat/completions", _root_chat)
+        root_runner = web.AppRunner(root_app)
+        await root_runner.setup()
+        await web.TCPSite(root_runner, "127.0.0.1", 11092).start()
+        r = await probe_llm(session, "127.0.0.1", 11092, cfg)
+        check("probe_llm_root",
+              r is not None and r.get("model") == "root-model"
+              and r.get("api_base") == "http://127.0.0.1:11092",
+              repr(r))
+        await root_runner.cleanup()
 
         # 2. probes against a closed port
         d = await probe_socks5(session, "127.0.0.1", 11089, cfg)
@@ -83,6 +109,7 @@ async def run():
              "egress": selftest.MOCK_EGRESS, "captured_at": now},
             {"type": "llm", "ip": "127.0.0.1", "port": selftest.LLM_PORT,
              "provider": "selftest", "source": "selftest",
+             "api_base": f"http://127.0.0.1:{selftest.LLM_PORT}/v1",
              "model": "mock-llm-1", "reply": "Hello! I am the mock model.",
              "captured_at": now},
             {"type": "llm", "ip": "127.0.0.1", "port": 11089,
@@ -97,8 +124,10 @@ async def run():
         await bot.cmd_export(42)
         texts = [t for _, t in bot.transport.messages]
         check("export_lists",
-              any("scavenger export" in t and "mock-llm-1" in t and
-                  "socks5://127.0.0.1" in t for t in texts),
+              any("scavenger export" in t and "mock-llm-1" in t
+                  and "socks5://127.0.0.1" in t
+                  and f"http://127.0.0.1:{selftest.LLM_PORT}/v1" in t
+                  for t in texts),
               repr(texts))
 
         # 5. /revalidate drops the dead entry, keeps the live ones

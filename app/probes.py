@@ -97,9 +97,9 @@ async def probe_http(session, ip, port, cfg):
     return {"egress": egress}
 
 
-async def _llm_first_model(session, base, headers, ssl_param, cfg):
+async def _llm_first_model(session, api, headers, ssl_param, cfg):
     try:
-        async with session.get(base + "/v1/models", headers=headers, ssl=ssl_param,
+        async with session.get(api + "/models", headers=headers, ssl=ssl_param,
                                timeout=aiohttp.ClientTimeout(total=cfg.probe_timeout)) as r:
             if r.status != 200:
                 return None
@@ -116,7 +116,7 @@ async def _llm_first_model(session, base, headers, ssl_param, cfg):
     return None
 
 
-async def _llm_chat(session, base, model, headers, ssl_param, cfg):
+async def _llm_chat(session, api, model, headers, ssl_param, cfg):
     """POST one hello. Returns (result_dict_or_None, status_code)."""
     payload = {
         "model": model,
@@ -125,7 +125,7 @@ async def _llm_chat(session, base, model, headers, ssl_param, cfg):
         "stream": False,
     }
     try:
-        async with session.post(base + "/v1/chat/completions", json=payload,
+        async with session.post(api + "/chat/completions", json=payload,
                                 headers=headers, ssl=ssl_param,
                                 timeout=aiohttp.ClientTimeout(total=cfg.chat_timeout)) as r:
             if r.status not in (200, 429):
@@ -188,25 +188,41 @@ def _llm_auth_variants(cfg):
     return variants
 
 
+async def _llm_try(session, api, scheme, headers, ssl_param, cfg):
+    """models -> chat against one concrete API base (already path-included)."""
+    model = await _llm_first_model(session, api, headers, ssl_param, cfg)
+    if not model:
+        return None
+    res, _status = await _llm_chat(session, api, model, headers, ssl_param, cfg)
+    if res:
+        res["scheme"] = scheme
+        res["api_base"] = api  # the base that actually worked, e.g. http://ip:port/v1
+    return res
+
+
 async def _llm_combo(session, ip, port, scheme, auth, cfg):
     base = f"{scheme}://{ip}:{port}"
     ssl_param = False if scheme == "https" else None
     headers = {"Authorization": auth}
-    model = await _llm_first_model(session, base, headers, ssl_param, cfg)
-    if not model:
-        return None
-    res, _status = await _llm_chat(session, base, model, headers, ssl_param, cfg)
-    if res:
-        res["scheme"] = scheme
-    return res
+    # almost all gateways mount the API under /v1, a few serve it at the root;
+    # try both, and /v1 wins when both respond
+    results = await asyncio.gather(
+        _llm_try(session, base + "/v1", scheme, headers, ssl_param, cfg),
+        _llm_try(session, base, scheme, headers, ssl_param, cfg),
+        return_exceptions=True)
+    for res in results:
+        if isinstance(res, dict):
+            return res
+    return None
 
 
 async def probe_llm(session, ip, port, cfg):
-    """OpenAI-compatible gateway: /v1/models, then a hello with a weak key.
+    """OpenAI-compatible gateway: /models, then a hello with a weak key.
 
-    Self-hosted gateways are plain http or https depending on the deployer,
-    and accept the test key or even a bare "Bearer" with an empty token,
-    so scheme x auth combinations are all probed and the first hit wins.
+    The API base is probed as {base}/v1 (the common layout) and {base} (the
+    rare root layout), plus scheme http/https, plus the test key and a bare
+    "Bearer" with an empty token; the first hit wins and the working base is
+    recorded on the result.
     """
     tasks = [_llm_combo(session, ip, port, scheme, auth, cfg)
              for scheme in ("http", "https")
