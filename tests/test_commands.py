@@ -154,6 +154,17 @@ async def run():
         check("store_reload", len(await store2.all_items()) == 3)
         check("store_reload_dedupe",
               not await store2.add(dict(items[1])))
+
+        # 7. /llmtest model list is well-formed (8 providers, flagship first)
+        from app import llm_models
+        ok_providers = all(
+            info.get("models") and info.get("flagship") in info["models"]
+            and info["models"][0] == info["flagship"]
+            for info in llm_models.PROVIDERS.values())
+        check("llm_models_list",
+              len(llm_models.PROVIDERS) == 8 and ok_providers
+              and llm_models.candidate_models("openai")[0] == "gpt-6-astra"
+              and llm_models.candidate_models("nope") == [])
     finally:
         await session.close()
         await cleanup()
