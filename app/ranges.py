@@ -52,6 +52,16 @@ FEEDS = {
                      "AS204527", "AS205434", "AS205805", "AS206998",
                      "AS208162", "AS212795", "AS213242", "AS219514",
                      "AS263034", "AS393472", "AS394695"]},
+    # RIPEstat-verified 2026-10-15: every ASN below announces IPv4 prefixes.
+    # Leaseweb's legacy AS16265/AS60626 were excluded — both announce 0
+    # prefixes (space migrated to AS60781).
+    "contabo": {"type": "ripe",
+                "asns": ["AS51167", "AS40021", "AS141995"]},
+    "leaseweb": {"type": "ripe",
+                 "asns": ["AS60781", "AS38930", "AS7203", "AS19148",
+                          "AS396362", "AS30633", "AS395954", "AS396190",
+                          "AS27411", "AS32613", "AS59253", "AS134351",
+                          "AS28753"]},
 }
 
 AZURE_PAGE_URL = "https://www.microsoft.com/en-us/download/details.aspx?id=56519"

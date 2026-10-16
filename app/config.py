@@ -30,12 +30,14 @@ def _bool(name, default=False):
 
 
 class Config:
-    # 20128/20130: default ports of two popular self-hosted LLM gateways
+    # 20128/20130: default ports of two popular self-hosted LLM gateways;
+    # 7860: Gradio (common front for self-hosted models); 3000/1234/1337/
+    # 30000: dev servers and custom LLM/proxy ports seen in the wild
     DEFAULT_PORTS = ("80,443,8000,8080,3128,8888,1080,1081,10800,11434,"
-                     "4000,5000,9000,20128,20130")
+                     "4000,5000,9000,20128,20130,1234,30000,1337,7860,3000")
     DEFAULT_PROVIDERS = ("aws,azure,gcp,oci,hetzner,cloudflare,digitalocean,"
                          "alibaba,tencent,vultr,linode,fastly,ovh,scaleway,"
-                         "upcloud,ionos,yandex,ibm")
+                         "upcloud,ionos,yandex,ibm,contabo,leaseweb")
 
     def __init__(self):
         self.port = _int("PORT", 8080)

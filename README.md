@@ -3,7 +3,7 @@
 A single Docker container that looks like a plain "coming soon" web page but, driven
 entirely by environment variables, hunts the internet in the background:
 
-1. **Anonymous SOCKS5 / HTTP proxies** on cloud datacenter IPs (18 provider feeds,
+1. **Anonymous SOCKS5 / HTTP proxies** on cloud datacenter IPs (20 provider feeds,
    all regions) and on random residential IPv4 space — every proxy catch is
    **HTTPS-verified**: the probe opens a real `CONNECT` tunnel to port 443 and
    completes a full TLS handshake through it, so a catch actually works for
@@ -75,6 +75,8 @@ Two independent scanner groups run forever, each with `N` worker loops
   | ionos        | RIPEstat announced prefixes, AS8560                  |
   | yandex       | RIPEstat announced prefixes, AS13238/20144/207304    |
   | ibm          | RIPEstat announced prefixes, IBM/SoftLayer AS set (67 ASNs) |
+  | contabo      | RIPEstat announced prefixes, AS51167 (DE) + AS40021 (US) + AS141995 (SG) |
+  | leaseweb     | RIPEstat announced prefixes, 13 regional ASNs (NL/US/CA/APAC/DE; verified live 2026-10) |
 
 - **Residential group** — picks uniform random public IPv4 /24 blocks (RFC1918,
   link-local, multicast, test ranges skipped) with the same sampling.
@@ -252,9 +254,9 @@ bot makes a slow, polite pass; raise the knobs for more coverage.
 | `CLOUD_SCANNERS`       | `1`                           | cloud worker loops                                  |
 | `RESIDENTIAL_SCANNERS` | `1`                           | residential worker loops                            |
 | `CHECK_CONCURRENCY`    | `50`                          | concurrent probes per scanner group                 |
-| `SCAN_PORTS`           | 15 ports (see `.env.example`) | ports probed on every sampled IP, incl. LLM-gateway ports 20128/20130 |
+| `SCAN_PORTS`           | 20 ports (see `.env.example`) | ports probed on every sampled IP, incl. LLM-gateway ports 20128/20130 and Gradio 7860 |
 | `SAMPLE_PER_24`        | `2`                           | random IPs probed inside each /24                   |
-| `PROVIDERS`            | all 18 (see `.env.example`)   | cloud feeds to use                                  |
+| `PROVIDERS`            | all 20 (see `.env.example`)   | cloud feeds to use                                  |
 | `LLM_TEST_API_KEY`     | `test`                        | sent as `Bearer <key>` in one probe variant; a bare `Bearer` (empty token) variant is always probed too |
 | `LLM_MAX_TOKENS`       | `256`                         | hello-completion budget; reasoning models may spend tokens before answering |
 | `CONNECT_TIMEOUT`      | `2.5`                         | seconds                                             |
