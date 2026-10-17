@@ -2,7 +2,7 @@
 
 Reserved for the future /llmtest Telegram command: given a caught
 gateway, it would test the gateway against real model identifiers per
-provider (a weak gateway that answers "hello" will 404 on unknown
+provider (a weak gateway that answers a probe will 404 on unknown
 models and 200/429 on ones it actually serves, which identifies both
 the model list it exposes and which provider it is mimicking).
 

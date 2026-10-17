@@ -216,10 +216,10 @@ async def _llm_first_model(session, api, headers, ssl_param, cfg):
 
 
 async def _llm_chat(session, api, model, headers, ssl_param, cfg):
-    """POST one hello. Returns (result_dict_or_None, status_code)."""
+    """POST one probe message. Returns (result_dict_or_None, status_code)."""
     payload = {
         "model": model,
-        "messages": [{"role": "user", "content": "hello"}],
+        "messages": [{"role": "user", "content": "reply probe-ok"}],
         "max_tokens": cfg.llm_max_tokens,
         "stream": False,
     }
@@ -316,7 +316,8 @@ async def _llm_combo(session, ip, port, scheme, auth, cfg):
 
 
 async def probe_llm(session, ip, port, cfg):
-    """OpenAI-compatible gateway: /models, then a hello with a weak key.
+    """OpenAI-compatible gateway: /models, then a probe message with a weak
+    key.
 
     The API base is probed as {base}/v1 (the common layout) and {base} (the
     rare root layout), plus scheme http/https, plus the test key and a bare

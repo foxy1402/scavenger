@@ -11,7 +11,9 @@ entirely by environment variables, hunts the internet in the background:
    HTTPS) are not caught.
 2. **Weakly configured LLM gateways** — anything serving a `GET /models` endpoint
    (under the standard `/v1` prefix, or at the bare root in rare cases) that
-   returns a model list is probed with a simple `hello` chat completion. Two weak
+   returns a model list is probed with a `reply probe-ok` chat completion —
+   a real model reflects the prompt in its answer, a "ghost" gateway that
+   echoes a fixed greeting for any input gives itself away in the reply. Two weak
    auth flavors are sent: `Bearer <key>` (default key `test`, configurable) **and**
    a bare `Bearer` with an empty token, to catch gateways that accept any random or
    empty key. Both `http://` and `https://` are tried on every port, because
@@ -103,7 +105,7 @@ Per sampled `ip:port` (default 15 ports, including LLM-gateway ports **20128** a
   catch. A hit is: `GET {base}/v1/models` (or `{base}/models`) returns a model
   list, pick the first model, then `POST …/v1/chat/completions` (or
   `…/chat/completions`) with
-  `{"messages":[{"role":"user","content":"hello"}]}`, `max_tokens=LLM_MAX_TOKENS`
+  `{"messages":[{"role":"user","content":"reply probe-ok"}]}`, `max_tokens=LLM_MAX_TOKENS`
   (default 256 — big enough that reasoning models don't burn the whole budget
   thinking before answering). Counted as a catch:
   - 200 with a non-empty reply (`status: ok`),
@@ -258,7 +260,7 @@ bot makes a slow, polite pass; raise the knobs for more coverage.
 | `SAMPLE_PER_24`        | `2`                           | random IPs probed inside each /24                   |
 | `PROVIDERS`            | all 20 (see `.env.example`)   | cloud feeds to use                                  |
 | `LLM_TEST_API_KEY`     | `test`                        | sent as `Bearer <key>` in one probe variant; a bare `Bearer` (empty token) variant is always probed too |
-| `LLM_MAX_TOKENS`       | `256`                         | hello-completion budget; reasoning models may spend tokens before answering |
+| `LLM_MAX_TOKENS`       | `256`                         | probe-completion budget; reasoning models may spend tokens before answering |
 | `CONNECT_TIMEOUT`      | `2.5`                         | seconds                                             |
 | `PROBE_TIMEOUT`        | `6`                           | seconds                                             |
 | `CHAT_TIMEOUT`         | `30`                          | seconds (LLM completions can be slow)               |
