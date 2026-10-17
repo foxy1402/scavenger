@@ -296,6 +296,7 @@ async def _llm_try(session, api, scheme, headers, ssl_param, cfg):
     if res:
         res["scheme"] = scheme
         res["api_base"] = api  # the base that actually worked, e.g. http://ip:port/v1
+        res["auth"] = headers.get("Authorization", "")  # which variant worked
     return res
 
 

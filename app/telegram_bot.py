@@ -37,10 +37,24 @@ def format_catch(item):
                  f"addr     {addr}",
                  f"model    {item.get('model', '?')}",
                  f"reply    {item.get('reply', '')[:150]}"]
+        auth = _show_auth(item.get("auth"))
+        if auth:
+            lines.append(f"auth     {auth}")
         if item.get("status") and item["status"] != "ok":
             lines.append(f"status   {item['status']}")
         lines += [f"where    {where}", f"captured {stamp}"]
     return "\n".join(lines)
+
+
+def _show_auth(auth):
+    """The Authorization variant that worked, e.g. 'Bearer test' or
+    'Bearer (empty)' for the bare no-key variant. None if not recorded
+    (catches stored before this field existed)."""
+    if auth is None:
+        return None
+    if auth.strip() == "Bearer":
+        return "Bearer (empty)"
+    return auth[:60]
 
 
 def format_export(items):
@@ -58,7 +72,10 @@ def format_export(items):
                 status = f"  [{i['status']}]" if i.get("status") and i["status"] != "ok" else ""
                 addr = (i.get("api_base")
                         or f"{i.get('scheme', 'http')}://{i.get('ip')}:{i.get('port')}")
-                parts.append(f"{addr}  model={i.get('model', '?')}{status}  ({where})  {stamp}")
+                auth = _show_auth(i.get("auth"))
+                parts.append(f"{addr}  model={i.get('model', '?')}{status}"
+                             + (f"  auth={auth}" if auth else "")
+                             + f"  ({where})  {stamp}")
             else:
                 scheme = "socks5" if key == "socks5" else "http"
                 parts.append(f"{scheme}://{i.get('ip')}:{i.get('port')}"

@@ -231,6 +231,7 @@ Example catch message:
 🤖 CATCH — LLM GATEWAY
 addr     https://54.172.31.9:8000/v1
 model    gpt-4o-mini
+auth     Bearer test
 reply    Hello! How can I help you today?
 where    cloud/aws
 captured 2026-10-14T12:00:00Z

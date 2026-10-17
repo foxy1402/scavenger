@@ -78,8 +78,18 @@ async def run():
         l = await probe_llm(session, "127.0.0.1", selftest.LLM_PORT, cfg)
         check("probe_llm",
               l is not None and l.get("model") == "mock-llm-1"
-              and l.get("api_base") == f"http://127.0.0.1:{selftest.LLM_PORT}/v1",
+              and l.get("api_base") == f"http://127.0.0.1:{selftest.LLM_PORT}/v1"
+              and str(l.get("auth", "")).startswith("Bearer"),
               repr(l))
+
+        # catch message shows which auth variant worked
+        from app.telegram_bot import format_catch
+        rendered = format_catch({"type": "llm", "ip": "1.2.3.4", "port": 8000,
+                                 "api_base": "http://1.2.3.4:8000/v1",
+                                 "model": "m", "reply": "r",
+                                 "auth": "Bearer", "captured_at": "now"})
+        check("catch_shows_auth", "auth     Bearer (empty)" in rendered,
+              repr(rendered))
 
         # root-path gateway (no /v1 prefix): caught via the bare-base fallback
         root_app = web.Application()
